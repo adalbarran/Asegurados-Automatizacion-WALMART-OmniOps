@@ -1,71 +1,156 @@
+# Archivo: src/logic_functions.py (Tu lógica central)
 import pandas as pd
-from datetime import date
 import os
 
-# --- RUTAS DE ARCHIVOS (Ajusta esto en tu proyecto) ---
-# Este archivo será el REPORTE FINAL que tú usarás para saber a quién pagar.
-RUTA_REPORTE_FINAL = 'data/Reporte_Final_Asegurados_Aprobados.xlsx'
-NOMBRE_HOJA_REPORTE = 'Aprobados_Pagos'
-
-
-def validar_elegibilidad(flota_pct, ventana_pct, otea_pct, n2h_pct):
-    """
-    Verifica si un asegurado cumple con los 4 KPIs (Reglas de Pago).
-    Se asume que los porcentajes se pasan como valores decimales (ej: 0.98 para 98%).
-    """
-    try:
-        reglas = {
-            "Flota (<= 100%)": flota_pct <= 1.00,
-            "Ventana (<= 60%)": ventana_pct <= 0.60,
-            "OTEA (>= 98%)": otea_pct >= 0.98,
-            "N2H (>= 70%)": n2h_pct >= 0.70
-        }
-        
-        es_aprobado = all(reglas.values())
-        
-        if es_aprobado:
-            return True, "APROBADO: Cumple con todos los KPIs."
-        else:
-            fallas = [k for k, v in reglas.items() if v is False]
-            return False, f"NO ELEGIBLE: Falló en las siguientes reglas: {', '.join(fallas)}"
-
-    except TypeError:
-        return False, "Error: Asegúrate de que todos los valores de KPI sean números."
-
-
-def registrar_aprobado_en_reporte(datos_ingresados, nombre_zonal):
-    """
-    Adjunta un nuevo registro al Reporte Final de Aprobados.
-    """
+# --- FUNCIÓN DE LÓGICA CENTRAL ---
+def validar_registro(row, tarifa):
+    """Aplica las 4 reglas de negocio y calcula el pago para una sola fila (registro)."""
     
-    # 1. Crear el nuevo registro (DataFrame) con la estructura del Excel final
-    nuevo_registro = pd.DataFrame({
-        'Responsable': [nombre_zonal],
-        'Local': [datos_ingresados['Local']],
-        'Fecha': [datos_ingresados['Fecha']],
-        'Proveedor': [datos_ingresados['Proveedor']],
-        'AM/PM': [datos_ingresados['AM/PM']],
-        'Motivo': [datos_ingresados['Motivo']],
-        'Modelo': [datos_ingresados['Modelo']],
-        'Q Shoppers/Pickers': [datos_ingresados['Q Shoppers/Pickers']],
-        'Comentario': [datos_ingresados['Comentario']],
-        'CHECK': ['OK'] # Marcado automático como APROBADO
-    })
+    # Mapeo de columnas de entrada (AJUSTAR ESTO A LA COLUMNA REAL DE TU REPORTE ZONAL)
+    kpi_flota_perc = row['Flota (%)']
+    kpi_ventana_perc = row['Ventana (%)']
+    kpi_otea_perc = row['OTEA (%)']
+    kpi_n2h_perc = row['N2H (%)']
+    num_asegurados = row['Cant. Asegurados'] # Dato necesario para el cálculo
     
+    reglas_fallidas = []
+
+    # Aplicación de las Reglas
+    if kpi_flota_perc > 100.0:
+        reglas_fallidas.append("I. Flota > 100%")
+    if kpi_ventana_perc > 60.0:
+        reglas_fallidas.append("II. Ocupación Ventana > 60%")
+    if kpi_otea_perc < 98.0:
+        reglas_fallidas.append("III. OTEA < 98%")
+    if kpi_n2h_perc < 70.0:
+        reglas_fallidas.append("IV. N2H < 70%")
+
+    es_aprobado = len(reglas_fallidas) == 0
+    
+    # --- CÁLCULO DE VALOR ---
+    if es_aprobado:
+        valor_a_pagar = num_asegurados * tarifa
+        estado = "APROBADO"
+    else:
+        valor_a_pagar = 0
+        estado = "RECHAZADO"
+
+    return {
+        'Estado_Final': estado,
+        'Valor_Calculado': valor_a_pagar,
+        'Reglas_Fallidas': ", ".join(reglas_fallidas) if reglas_fallidas else "N/A"
+    }
+
+# --- FUNCIÓN PRINCIPAL DE PROCESAMIENTO DE LOTE ---
+def procesar_lote(df, tarifa):
+    """Procesa un DataFrame y devuelve los resultados."""
+    if df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Aplica la lógica a cada fila del DataFrame y crea nuevas columnas
+    resultados = df.apply(
+        lambda row: validar_registro(row, tarifa),
+        axis=1, result_type='expand'
+    )
+    
+    df_resultado = pd.concat([df, resultados], axis=1)
+    
+    df_aprobados = df_resultado[df_resultado['Estado_Final'] == 'APROBADO'].copy()
+    df_completo = df_resultado.copy()
+    
+    return df_aprobados, df_completo
+
+
+# --- FUNCIÓN DE LÓGICA CENTRAL ---
+def validar_registro(row, tarifa):
+    """Aplica las 4 reglas de negocio y calcula el pago para una sola fila (registro)."""
+    
+    # Mapeo de columnas de entrada (AJUSTAR ESTO A LA COLUMNA REAL DE TU REPORTE ZONAL)
+    kpi_flota_perc = row['Flota (%)']
+    kpi_ventana_perc = row['Ventana (%)']
+    kpi_otea_perc = row['OTEA (%)']
+    kpi_n2h_perc = row['N2H (%)']
+    num_asegurados = row['Cant. Asegurados'] # Dato necesario para el cálculo
+    
+    reglas_fallidas = []
+
+    # Aplicación de las Reglas
+    if kpi_flota_perc > 100.0:
+        reglas_fallidas.append("I. Flota > 100%")
+    if kpi_ventana_perc > 60.0:
+        reglas_fallidas.append("II. Ocupación Ventana > 60%")
+    if kpi_otea_perc < 98.0:
+        reglas_fallidas.append("III. OTEA < 98%")
+    if kpi_n2h_perc < 70.0:
+        reglas_fallidas.append("IV. N2H < 70%")
+
+    es_aprobado = len(reglas_fallidas) == 0
+    
+    # --- CÁLCULO DE VALOR ---
+    if es_aprobado:
+        valor_a_pagar = num_asegurados * tarifa
+        estado = "APROBADO"
+    else:
+        valor_a_pagar = 0
+        estado = "RECHAZADO"
+
+    # Retorna un diccionario con los nuevos campos de resultado
+    return {
+        'Estado_Final': estado,
+        'Valor_Calculado': valor_a_pagar,
+        'Reglas_Fallidas': ", ".join(reglas_fallidas) if reglas_fallidas else "N/A"
+    }
+
+# --- FUNCIÓN PRINCIPAL DE PROCESAMIENTO DE LOTE ---
+def procesar_lote_y_generar_reporte(archivo_entrada, tarifa):
+    print(f"Iniciando procesamiento del archivo: {archivo_entrada}")
+    
+    # 1. Carga del Archivo (Simulando la carga del Zonal)
     try:
-        # Intenta leer el archivo existente (si no existe, lo creamos)
-        if os.path.exists(RUTA_REPORTE_FINAL):
-            df_existente = pd.read_excel(RUTA_REPORTE_FINAL, sheet_name=NOMBRE_HOJA_REPORTE)
-        else:
-            df_existente = pd.DataFrame() # DataFrame vacío si es la primera vez que se ejecuta
-            
-        # 2. Concatenar (Adjuntar) el nuevo registro
-        df_actualizado = pd.concat([df_existente, nuevo_registro], ignore_index=True)
+        df = pd.read_excel(archivo_entrada)
+        print(f"Archivo cargado. Se encontraron {len(df)} registros.")
+    except FileNotFoundError:
+        print(f"ERROR: Archivo no encontrado en la ruta: {archivo_entrada}")
+        return
+
+    # 2. Aplicación de la Lógica a cada fila (Máxima Automatización)
+    # Aplica la función 'validar_registro' a cada fila del DataFrame y crea nuevas columnas
+    resultados = df.apply(
+        lambda row: validar_registro(row, tarifa),
+        axis=1, result_type='expand'
+    )
+
+    # 3. Consolidar resultados en el DataFrame original
+    df = pd.concat([df, resultados], axis=1)
+
+    # 4. Generación de Reporte Final (Solo aprobados para Finanzas)
+    df_aprobados = df[df['Estado_Final'] == 'APROBADO']
+    
+    ruta_salida = 'Reporte_Pagos_Aprobados_FINAL.xlsx'
+    
+    if not df_aprobados.empty:
+        # Aquí se simula la escritura del reporte final para Finanzas
+        df_aprobados.to_excel(ruta_salida, index=False)
+        print("\n----------------------------------------------------")
+        print(f"✅ PROCESO COMPLETADO. Reporte de Pagos generado en: {ruta_salida}")
+        print(f"  Total Aprobados: {len(df_aprobados)}")
+        print(f"  Valor Total a Pagar: ${df_aprobados['Valor_Calculado'].sum():,.0f}")
+        print("----------------------------------------------------")
+    else:
+        print("\n----------------------------------------------------")
+        print("⚠️ Advertencia: No se encontraron registros elegibles para pago.")
+        print("----------------------------------------------------")
         
-        # 3. Sobrescribir/Guardar el archivo
-        df_actualizado.to_excel(RUTA_REPORTE_FINAL, sheet_name=NOMBRE_HOJA_REPORTE, index=False)
-        
-        return True, f"Registro de {datos_ingresados['Proveedor']} añadido al Reporte Final de Pagos."
-        
-    except Exception as e:
-        return False, f"Error crítico al escribir en el Excel de Reporte Final: {e}"
+    # Opcional: Guardar el reporte completo (con rechazados y motivos)
+    df.to_excel('Reporte_Completo_Validacion.xlsx', index=False)
+    print("Reporte completo de la validación (incluye rechazados) guardado.")
+
+
+# --- EJECUCIÓN DEL SCRIPT DE PRUEBA ---
+if __name__ == "__main__":
+    # La ruta del archivo de entrada debe ser relativa a donde ejecutas el script
+    # Asumimos que 'datos_asegurados_prueba.xlsx' está en la carpeta raíz del proyecto.
+    archivo_entrada = '../datos_asegurados_prueba.xlsx' 
+    
+    # La Tarifa Base es la única variable que la Zonal debería ingresar fácilmente
+    procesar_lote_y_generar_reporte(archivo_entrada, TARIFA_BASE_PAGO)    
